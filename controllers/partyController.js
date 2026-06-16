@@ -1,0 +1,106 @@
+const Party = require('../moduls/party');
+
+// Add Party
+exports.addParty = async (req, res) => {
+  try {
+    const { partyName, mobileNo, address, vehicleNumbers, remark } = req.body;
+    
+    const party = new Party({
+      partyName,
+      mobileNo,
+      address,
+      vehicleNumbers: Array.isArray(vehicleNumbers) ? vehicleNumbers : [],
+      remark
+    });
+
+    await party.save();
+    res.status(201).json(party);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+// Get all Parties with Search and Pagination
+exports.getParties = async (req, res) => {
+  try {
+    const { search = '', page = 1, limit = 10, sortBy = 'partyName', order = 'asc' } = req.query;
+
+    const query = {};
+    if (search) {
+      query.$or = [
+        { partyName: { $regex: search, $options: 'i' } },
+        { mobileNo: { $regex: search, $options: 'i' } },
+        { address: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    const sortOrder = order === 'desc' ? -1 : 1;
+    const sort = { [sortBy]: sortOrder };
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const total = await Party.countDocuments(query);
+    const parties = await Party.find(query)
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    res.status(200).json({
+      parties,
+      total,
+      page: parseInt(page),
+      pages: Math.ceil(total / limit)
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Get Party by ID
+exports.getPartyById = async (req, res) => {
+  try {
+    const party = await Party.findById(req.params.id);
+    if (!party) {
+      return res.status(404).json({ message: 'Party not found' });
+    }
+    res.status(200).json(party);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Update Party
+exports.updateParty = async (req, res) => {
+  try {
+    const { partyName, mobileNo, address, vehicleNumbers, remark } = req.body;
+    const party = await Party.findById(req.params.id);
+
+    if (!party) {
+      return res.status(404).json({ message: 'Party not found' });
+    }
+
+    party.partyName = partyName || party.partyName;
+    party.mobileNo = mobileNo || party.mobileNo;
+    party.address = address !== undefined ? address : party.address;
+    party.vehicleNumbers = Array.isArray(vehicleNumbers) ? vehicleNumbers : party.vehicleNumbers;
+    party.remark = remark !== undefined ? remark : party.remark;
+
+    await party.save();
+    res.status(200).json(party);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+// Delete Party
+exports.deleteParty = async (req, res) => {
+  try {
+    const party = await Party.findById(req.params.id);
+    if (!party) {
+      return res.status(404).json({ message: 'Party not found' });
+    }
+    await party.deleteOne();
+    res.status(200).json({ message: 'Party deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
