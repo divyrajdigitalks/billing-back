@@ -1,4 +1,6 @@
 const Party = require('../moduls/party');
+const Bill = require('../moduls/bill');
+const Payment = require('../moduls/payment');
 
 // Add Party
 exports.addParty = async (req, res) => {
@@ -45,8 +47,27 @@ exports.getParties = async (req, res) => {
       .skip(skip)
       .limit(parseInt(limit));
 
+    // Calculate totals for each party
+    const partiesWithTotals = await Promise.all(
+      parties.map(async (party) => {
+        const bills = await Bill.find({ partyId: party._id });
+        const payments = await Payment.find({ partyId: party._id });
+
+        const totalBillAmount = bills.reduce((sum, b) => sum + b.billAmount, 0);
+        const totalPaidAmount = payments.reduce((sum, p) => sum + p.amount, 0);
+        const totalDueAmount = totalBillAmount - totalPaidAmount;
+
+        return {
+          ...party.toObject(),
+          totalBillAmount,
+          totalPaidAmount,
+          totalDueAmount
+        };
+      })
+    );
+
     res.status(200).json({
-      parties,
+      parties: partiesWithTotals,
       total,
       page: parseInt(page),
       pages: Math.ceil(total / limit)
