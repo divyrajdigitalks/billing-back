@@ -30,7 +30,8 @@ exports.getParties = async (req, res) => {
       query.$or = [
         { partyName: { $regex: search, $options: 'i' } },
         { mobileNo: { $regex: search, $options: 'i' } },
-        { address: { $regex: search, $options: 'i' } }
+        { address: { $regex: search, $options: 'i' } },
+        { vehicleNumbers: { $elemMatch: { $regex: search, $options: 'i' } } }
       ];
     }
 

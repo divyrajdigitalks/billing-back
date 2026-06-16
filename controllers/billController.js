@@ -5,7 +5,7 @@ const { recalculatePartyBills } = require('../utils/balanceHelper');
 // Add Bill
 exports.addBill = async (req, res) => {
   try {
-    const { partyId, vehicleNumber, billDate, billAmount, remark } = req.body;
+    const { partyId, vehicleNumber, billDate, billAmount, remark, receiveAmount = 0 } = req.body;
 
     // Check if Party exists
     const party = await Party.findById(partyId);
@@ -24,16 +24,36 @@ exports.addBill = async (req, res) => {
       }
     }
 
+    const paidAmount = parseFloat(receiveAmount) || 0;
+    const pendingAmount = parseFloat(billAmount) - paidAmount;
+
     const bill = new Bill({
       billNo: newBillNo,
       partyId,
       vehicleNumber,
       billDate: billDate || new Date(),
       billAmount,
+      paidAmount,
+      pendingAmount,
       remark
     });
 
     await bill.save();
+    
+    // If receive amount > 0, create a payment record
+    if (paidAmount > 0) {
+      const Payment = require('../moduls/payment');
+      const payment = new Payment({
+        partyId,
+        billId: bill._id,
+        amount: paidAmount,
+        paymentDate: billDate || new Date(),
+        paymentMode: 'Cash',
+        remark: `Payment against bill ${newBillNo}`
+      });
+      await payment.save();
+    }
+
     await recalculatePartyBills(partyId);
     res.status(201).json(bill);
   } catch (error) {
@@ -49,11 +69,14 @@ exports.getBills = async (req, res) => {
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
     
-    // Find parties that match the search query
+    // Find parties that match the search query (name or mobile)
     let partyIds = [];
     if (search) {
       const matchingParties = await Party.find({
-        partyName: { $regex: search, $options: 'i' }
+        $or: [
+          { partyName: { $regex: search, $options: 'i' } },
+          { mobileNo: { $regex: search, $options: 'i' } }
+        ]
       }).select('_id');
       partyIds = matchingParties.map(p => p._id);
     }
