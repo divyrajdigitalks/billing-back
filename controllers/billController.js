@@ -63,6 +63,31 @@ const findPartyFromRow = async (row) => {
   return null;
 };
 
+const parseDateFlexible = (value) => {
+  if (!value) return null;
+  // Try native parse first
+  let d = new Date(value);
+  if (!Number.isNaN(d.getTime())) return d;
+
+  // Try dd-mm-yyyy or dd/mm/yyyy
+  const m = String(value).trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (m) {
+    const day = m[1].padStart(2, '0');
+    const month = m[2].padStart(2, '0');
+    let year = m[3];
+    if (year.length === 2) year = '20' + year;
+    const iso = `${year}-${month}-${day}`;
+    d = new Date(iso);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+
+  // Try replacing slashes with dashes and parse again
+  d = new Date(String(value).replace(/\//g, '-'));
+  if (!Number.isNaN(d.getTime())) return d;
+
+  return null;
+};
+
 // Add Bill
 exports.addBill = async (req, res) => {
   try {
@@ -221,9 +246,13 @@ exports.importCsv = async (req, res) => {
 
       const receiveAmount = parseFloat(row.receiveamount || row.paidamount || '0') || 0;
       const billDateValue = row.billdate || row['bill date'] || '';
-      const billDate = billDateValue ? new Date(billDateValue) : new Date();
-      if (billDateValue && Number.isNaN(billDate.getTime())) {
-        return res.status(400).json({ message: `Row ${rowNumber}: Invalid bill date.` });
+      let billDate = new Date();
+      if (billDateValue) {
+        const parsed = parseDateFlexible(billDateValue);
+        if (!parsed) {
+          return res.status(400).json({ message: `Row ${rowNumber}: Invalid bill date. Accepted formats: YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY.` });
+        }
+        billDate = parsed;
       }
 
       let rowBillNo = row.billno || row['bill no'] || '';
@@ -253,7 +282,7 @@ exports.importCsv = async (req, res) => {
       if (receiveAmount > 0) {
         const Payment = require('../moduls/payment');
         const payment = new Payment({
-          partyId: party._id,
+          partyId: resolvedParty._id,
           billId: bill._id,
           amount: receiveAmount,
           paymentDate: billDate,
@@ -263,7 +292,7 @@ exports.importCsv = async (req, res) => {
         await payment.save();
       }
 
-      await recalculatePartyBills(party._id);
+      await recalculatePartyBills(resolvedParty._id);
     }
 
     return res.status(200).json({ message: `Imported ${rows.length} bills successfully.` });
