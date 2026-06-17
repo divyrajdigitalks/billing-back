@@ -199,8 +199,19 @@ exports.importCsv = async (req, res) => {
       const rowNumber = index + 2;
 
       const party = await findPartyFromRow(row);
-      if (!party) {
-        return res.status(400).json({ message: `Row ${rowNumber}: Party not found. Include partyId, partyName, or mobileNo.` });
+      let resolvedParty = party;
+      if (!resolvedParty) {
+        // Try to create party automatically if partyName and mobile number present
+        const partyName = row.partyname;
+        const mobileDigits = row.mobilenumber?.replace(/\D/g, '');
+        if (partyName && mobileDigits && mobileDigits.length >= 10) {
+          const normalizedMobile = mobileDigits.length === 10 ? `+91${mobileDigits}` : `+${mobileDigits}`;
+          const newParty = new Party({ partyName: partyName.trim(), mobileNo: normalizedMobile, address: row.address || '', vehicleNumbers: row.vehiclenumbers ? (Array.isArray(row.vehiclenumbers) ? row.vehiclenumbers : [row.vehiclenumbers]) : [] , remark: row.remark || '' });
+          await newParty.save();
+          resolvedParty = newParty;
+        } else {
+          return res.status(400).json({ message: `Row ${rowNumber}: Party not found. Include partyId, partyName, and mobileNo (10 digits) to auto-create.` });
+        }
       }
 
       const billAmount = parseFloat(row.billamount || row.amount || '');
@@ -228,7 +239,7 @@ exports.importCsv = async (req, res) => {
 
       const bill = new Bill({
         billNo: rowBillNo,
-        partyId: party._id,
+        partyId: resolvedParty._id,
         vehicleNumber: row.vehiclenumber || row['vehicle number'] || row.vehicle || '',
         billDate,
         billAmount,
