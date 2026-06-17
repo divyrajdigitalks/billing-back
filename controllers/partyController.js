@@ -47,24 +47,43 @@ exports.getParties = async (req, res) => {
       .skip(skip)
       .limit(parseInt(limit));
 
-    // Calculate totals for each party
-    const partiesWithTotals = await Promise.all(
-      parties.map(async (party) => {
-        const bills = await Bill.find({ partyId: party._id });
-        const payments = await Payment.find({ partyId: party._id });
+    // Calculate totals for each party in bulk (no N+1 queries)
+    const partyIds = parties.map(p => p._id);
 
-        const totalBillAmount = bills.reduce((sum, b) => sum + b.billAmount, 0);
-        const totalPaidAmount = payments.reduce((sum, p) => sum + p.amount, 0);
-        const totalDueAmount = totalBillAmount - totalPaidAmount;
+    // Group bills by partyId
+    const billTotals = await Bill.aggregate([
+      { $match: { partyId: { $in: partyIds } } },
+      { $group: { _id: '$partyId', totalBillAmount: { $sum: '$billAmount' } } }
+    ]);
 
-        return {
-          ...party.toObject(),
-          totalBillAmount,
-          totalPaidAmount,
-          totalDueAmount
-        };
-      })
-    );
+    // Group payments by partyId
+    const paymentTotals = await Payment.aggregate([
+      { $match: { partyId: { $in: partyIds } } },
+      { $group: { _id: '$partyId', totalPaidAmount: { $sum: '$amount' } } }
+    ]);
+
+    const billMap = billTotals.reduce((map, curr) => {
+      if (curr._id) map[curr._id.toString()] = curr.totalBillAmount;
+      return map;
+    }, {});
+
+    const paymentMap = paymentTotals.reduce((map, curr) => {
+      if (curr._id) map[curr._id.toString()] = curr.totalPaidAmount;
+      return map;
+    }, {});
+
+    const partiesWithTotals = parties.map((party) => {
+      const totalBillAmount = billMap[party._id.toString()] || 0;
+      const totalPaidAmount = paymentMap[party._id.toString()] || 0;
+      const totalDueAmount = totalBillAmount - totalPaidAmount;
+
+      return {
+        ...party.toObject(),
+        totalBillAmount,
+        totalPaidAmount,
+        totalDueAmount
+      };
+    });
 
     res.status(200).json({
       parties: partiesWithTotals,
