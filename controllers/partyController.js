@@ -25,7 +25,7 @@ exports.addParty = async (req, res) => {
 // Get all Parties with Search and Pagination
 exports.getParties = async (req, res) => {
   try {
-    const { search = '', page = 1, limit = 10, sortBy = 'partyName', order = 'asc' } = req.query;
+    const { search = '', page = 1, limit = 10, sortBy = 'partyName', order = 'asc', status = '' } = req.query;
 
     const query = {};
     if (search) {
@@ -41,14 +41,12 @@ exports.getParties = async (req, res) => {
     const sort = { [sortBy]: sortOrder };
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
-    const total = await Party.countDocuments(query);
-    const parties = await Party.find(query)
-      .sort(sort)
-      .skip(skip)
-      .limit(parseInt(limit));
-
-    // Calculate totals for each party in bulk (no N+1 queries)
-    const partyIds = parties.map(p => p._id);
+    
+    // First, get all parties matching search criteria (without pagination initially)
+    const allParties = await Party.find(query).sort(sort);
+    
+    // Calculate totals for each party
+    const partyIds = allParties.map(p => p._id);
 
     // Group bills by partyId
     const billTotals = await Bill.aggregate([
@@ -72,7 +70,7 @@ exports.getParties = async (req, res) => {
       return map;
     }, {});
 
-    const partiesWithTotals = parties.map((party) => {
+    let partiesWithTotals = allParties.map((party) => {
       const totalBillAmount = billMap[party._id.toString()] || 0;
       const totalPaidAmount = paymentMap[party._id.toString()] || 0;
       const totalDueAmount = totalBillAmount - totalPaidAmount;
@@ -85,8 +83,21 @@ exports.getParties = async (req, res) => {
       };
     });
 
+    // Apply status filter
+    if (status) {
+      if (status === 'pending') {
+        partiesWithTotals = partiesWithTotals.filter(p => p.totalDueAmount > 0);
+      } else if (status === 'done') {
+        partiesWithTotals = partiesWithTotals.filter(p => p.totalDueAmount <= 0);
+      }
+    }
+
+    // Apply pagination after filtering
+    const total = partiesWithTotals.length;
+    const paginatedParties = partiesWithTotals.slice(skip, skip + parseInt(limit));
+
     res.status(200).json({
-      parties: partiesWithTotals,
+      parties: paginatedParties,
       total,
       page: parseInt(page),
       pages: Math.ceil(total / limit)

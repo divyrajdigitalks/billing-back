@@ -99,8 +99,7 @@ exports.addBill = async (req, res) => {
       return res.status(404).json({ message: 'Party not found' });
     }
 
-    // Auto generate bill number
-    const lastBill = await Bill.findOne().sort({ createdAt: -1 });
+    // Auto generate or validate bill number
     let newBillNo = billNo?.trim();
     if (newBillNo) {
       const existingBill = await Bill.findOne({ billNo: newBillNo });
@@ -109,13 +108,6 @@ exports.addBill = async (req, res) => {
       }
     } else {
       newBillNo = await getNextBillNo();
-    }
-    if (lastBill && lastBill.billNo) {
-      const match = lastBill.billNo.match(/BILL-(\d+)/);
-      if (match) {
-        const lastNum = parseInt(match[1]);
-        newBillNo = `BILL-${lastNum + 1}`;
-      }
     }
 
     const paidAmount = parseFloat(receiveAmount) || 0;
@@ -159,7 +151,8 @@ exports.addBill = async (req, res) => {
 // Get all Bills with Search and Pagination
 exports.getBills = async (req, res) => {
   try {
-    const { search = '', page = 1, limit = 10 } = req.query;
+    const { search = '', page = 1, limit = 10, startDate = '', endDate = '', status = '' } = req.query;
+    console.log('getBills req.query:', req.query);
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
     
@@ -176,6 +169,8 @@ exports.getBills = async (req, res) => {
     }
 
     const query = {};
+    
+    // Search filter
     if (search) {
       query.$or = [
         { billNo: { $regex: search, $options: 'i' } },
@@ -187,12 +182,48 @@ exports.getBills = async (req, res) => {
       }
     }
 
+    // Date range filter
+    if (startDate || endDate) {
+      query.billDate = {};
+      if (startDate) {
+        // Create date from YYYY-MM-DD and set to start of day in local timezone
+        const [year, month, day] = startDate.split('-').map(Number);
+        const startDateObj = new Date(year, month - 1, day, 0, 0, 0, 0);
+        console.log('startDate:', startDate, 'startDateObj:', startDateObj);
+        query.billDate.$gte = startDateObj;
+      }
+      if (endDate) {
+        // Create date from YYYY-MM-DD and set to end of day in local timezone
+        const [year, month, day] = endDate.split('-').map(Number);
+        const endDateObj = new Date(year, month - 1, day, 23, 59, 59, 999);
+        console.log('endDate:', endDate, 'endDateObj:', endDateObj);
+        query.billDate.$lte = endDateObj;
+      }
+    }
+
+    // Status filter
+    if (status) {
+      console.log('status:', status);
+      if (status === 'pending') {
+        query.pendingAmount = { $gt: 0 };
+      } else if (status === 'done') {
+        query.pendingAmount = { $lte: 0 };
+      }
+    }
+    
+    console.log('getBills query:', query);
+
     const total = await Bill.countDocuments(query);
     const bills = await Bill.find(query)
       .populate('partyId', 'partyName mobileNo vehicleNumbers')
-      .sort({ createdAt: -1 })
+      .sort({ billDate: -1, createdAt: -1 }) // Sort by billDate descending, then createdAt descending
       .skip(skip)
       .limit(parseInt(limit));
+    
+    console.log('Found bills count:', bills.length);
+    if (bills.length > 0) {
+      console.log('First bill billDate:', bills[0].billDate, 'typeof:', typeof bills[0].billDate);
+    }
 
     res.status(200).json({
       bills,
